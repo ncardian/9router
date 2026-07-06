@@ -46,6 +46,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: 9router-cli-package
-          path: 9router-*.tgz
+          path: cli/9router-*.tgz
           if-no-files-found: error
           retention-days: 14
