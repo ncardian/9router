@@ -1,0 +1,53 @@
+name: Build CLI Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - 'feature/**'
+      - 'fix/**'
+      - 'chore/**'
+    paths-ignore:
+      - 'gitbook/**'
+      - '**/*.md'
+
+jobs:
+  build-cli-package:
+    name: Build npm package
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package.json
+            cli/package.json
+
+      - name: Install app dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install CLI dependencies
+        run: npm --prefix cli install --no-audit --no-fund
+
+      - name: Build and pack CLI
+        run: |
+          npm --prefix cli run pack:cli
+          mv ../9router-*.tgz .
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 9router-cli-package
+          path: 9router-*.tgz
+          if-no-files-found: error
+          retention-days: 14
