@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
+import ModelSelectModal from "@/shared/components/ModelSelectModal";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
   TUNNEL_BENEFITS,
@@ -22,6 +23,11 @@ export default function APIPageClient({ machineId }) {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [keyLimits, setKeyLimits] = useState({ dailyTokens: "", totalTokens: "", dailyCost: "", totalCost: "" });
+  const [allowedModels, setAllowedModels] = useState([]);
+  const [showModelSelector, setShowModelSelector] = useState(false);
+  const [activeProviders, setActiveProviders] = useState([]);
+  const [modelAliases, setModelAliases] = useState({});
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
 
@@ -100,6 +106,7 @@ export default function APIPageClient({ machineId }) {
   useEffect(() => {
     fetchData();
     loadSettings();
+    loadModelSelectorData();
   }, []);
 
   // Status poll: only while degraded (not yet reachable). Stop once healthy to avoid spam.
@@ -267,7 +274,40 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  // u2500u2500u2500 Cloudflare Tunnel handlers
+  const loadModelSelectorData = async () => {
+    try {
+      const [providersRes, aliasesRes] = await Promise.all([
+        fetch("/api/providers/client?pageSize=500"),
+        fetch("/api/models/alias"),
+      ]);
+      if (providersRes.ok) {
+        const data = await providersRes.json();
+        const providers = data.connections || data.providers || [];
+        setActiveProviders(providers.filter((provider) => provider.isActive !== false));
+      }
+      if (aliasesRes.ok) {
+        const data = await aliasesRes.json();
+        setModelAliases(data.aliases || {});
+      }
+    } catch (error) {
+      console.log("Error loading model selector data:", error);
+    }
+  };
+
+  const resetKeyForm = () => {
+    setNewKeyName("");
+    setKeyLimits({ dailyTokens: "", totalTokens: "", dailyCost: "", totalCost: "" });
+    setAllowedModels([]);
+    setShowModelSelector(false);
+  };
+
+  const buildKeyPayload = () => ({
+    name: newKeyName,
+    allowedModels,
+    limits: Object.fromEntries(Object.entries(keyLimits).map(([key, value]) => [key, value === "" ? null : Number(value)])),
+  });
+
+  // ─── Cloudflare Tunnel handlers
   // Ping tunnel health until reachable. Race multiple URLs (shortlink + direct) — 1 OK is enough.
   const pingTunnelHealth = async (...urls) => {
     setTunnelLoading(true);
@@ -614,14 +654,14 @@ export default function APIPageClient({ machineId }) {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify(buildKeyPayload()),
       });
       const data = await res.json();
 
       if (res.ok) {
         setCreatedKey(data.key);
         await fetchData();
-        setNewKeyName("");
+        resetKeyForm();
         setShowAddModal(false);
       }
     } catch (error) {
@@ -1027,6 +1067,17 @@ export default function APIPageClient({ machineId }) {
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
+                  <div className="flex flex-wrap gap-1.5 mt-2 text-[11px] text-text-muted">
+                    {key.allowedModels?.length > 0 ? (
+                      <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary">{key.allowedModels.length} allowed models</span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5">All models allowed</span>
+                    )}
+                    {key.limits?.dailyTokens != null && <span className="px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5">Daily {key.usage?.dailyTokens || 0}/{key.limits.dailyTokens} tokens</span>}
+                    {key.limits?.totalTokens != null && <span className="px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5">Total {key.usage?.totalTokens || 0}/{key.limits.totalTokens} tokens</span>}
+                    {key.limits?.dailyCost != null && <span className="px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5">Daily ${Number(key.usage?.dailyCost || 0).toFixed(4)}/${key.limits.dailyCost}</span>}
+                    {key.limits?.totalCost != null && <span className="px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5">Total ${Number(key.usage?.totalCost || 0).toFixed(4)}/${key.limits.totalCost}</span>}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Toggle
@@ -1067,7 +1118,7 @@ export default function APIPageClient({ machineId }) {
         title="Create API Key"
         onClose={() => {
           setShowAddModal(false);
-          setNewKeyName("");
+          resetKeyForm();
         }}
       >
         <div className="flex flex-col gap-4">
@@ -1077,6 +1128,32 @@ export default function APIPageClient({ machineId }) {
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
           />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Input label="Daily token limit" type="number" min="0" value={keyLimits.dailyTokens} onChange={(e) => setKeyLimits((prev) => ({ ...prev, dailyTokens: e.target.value }))} placeholder="Unlimited" />
+            <Input label="Total token limit" type="number" min="0" value={keyLimits.totalTokens} onChange={(e) => setKeyLimits((prev) => ({ ...prev, totalTokens: e.target.value }))} placeholder="Unlimited" />
+            <Input label="Daily cost limit ($)" type="number" min="0" step="0.0001" value={keyLimits.dailyCost} onChange={(e) => setKeyLimits((prev) => ({ ...prev, dailyCost: e.target.value }))} placeholder="Unlimited" />
+            <Input label="Total cost limit ($)" type="number" min="0" step="0.0001" value={keyLimits.totalCost} onChange={(e) => setKeyLimits((prev) => ({ ...prev, totalCost: e.target.value }))} placeholder="Unlimited" />
+          </div>
+          <div className="rounded-xl border border-border p-3 bg-surface/60">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">Allowed Models</p>
+                <p className="text-xs text-text-muted">Leave empty to allow every model.</p>
+              </div>
+              <Button variant="secondary" size="sm" onClick={() => setShowModelSelector(true)}>
+                Select Models
+              </Button>
+            </div>
+            {allowedModels.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-3">
+                {allowedModels.map((model) => (
+                  <button key={model} type="button" onClick={() => setAllowedModels((prev) => prev.filter((item) => item !== model))} className="px-2 py-1 rounded-full text-xs bg-primary/10 text-primary hover:bg-primary/20">
+                    {model} <span className="material-symbols-outlined align-middle text-[12px]">close</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="flex gap-2">
             <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
               Create
@@ -1084,7 +1161,7 @@ export default function APIPageClient({ machineId }) {
             <Button
               onClick={() => {
                 setShowAddModal(false);
-                setNewKeyName("");
+                resetKeyForm();
               }}
               variant="ghost"
               fullWidth
@@ -1094,6 +1171,24 @@ export default function APIPageClient({ machineId }) {
           </div>
         </div>
       </Modal>
+
+      <ModelSelectModal
+        isOpen={showModelSelector}
+        onClose={() => setShowModelSelector(false)}
+        title="Allowed Models"
+        activeProviders={activeProviders}
+        modelAliases={modelAliases}
+        addedModelValues={allowedModels}
+        closeOnSelect={false}
+        onSelect={(model) => {
+          const value = model?.value || model?.name || model;
+          setAllowedModels((prev) => prev.includes(value) ? prev : [...prev, value]);
+        }}
+        onDeselect={(model) => {
+          const value = model?.value || model?.name || model;
+          setAllowedModels((prev) => prev.filter((item) => item !== value));
+        }}
+      />
 
       {/* Created Key Modal */}
       <Modal

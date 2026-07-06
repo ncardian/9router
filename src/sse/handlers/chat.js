@@ -8,7 +8,7 @@ import {
   isValidApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, validateApiKeyPolicy } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -83,6 +83,14 @@ export async function handleChat(request, clientRawRequest = null) {
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+  }
+
+  if (apiKey) {
+    const policy = await validateApiKeyPolicy(apiKey, modelStr);
+    if (!policy.ok) {
+      log.warn("AUTH", policy.error);
+      return errorResponse(policy.status, policy.error);
+    }
   }
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
